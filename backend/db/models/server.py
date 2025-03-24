@@ -1,8 +1,12 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
-from ..database import Base
+from db.database import Base
 
 def generate_uuid():
     return str(uuid.uuid4())
