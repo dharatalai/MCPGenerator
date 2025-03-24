@@ -1,0 +1,17 @@
+# Create .gitignore with common Python exclusions
+echo "
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+ENV/
+.env.local
+*.db
+.DS_Store
+.idea/
+.vscode/
+" > .gitignore

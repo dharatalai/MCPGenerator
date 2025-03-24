@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+langgraph
+httpx
+pyyaml
+beautifulsoup4
+markdown
+openai
+pydantic
+fastmcp 

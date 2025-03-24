@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Google Drive MCP Server Configuration",
+  "description": "Configuration schema for Google Drive MCP server",
+  "type": "object",
+  "required": ["credentials"],
+  "properties": {
+    "credentials": {
+      "type": "object",
+      "description": "Google OAuth credentials",
+      "required": ["client_id", "client_secret", "refresh_token", "token"],
+      "properties": {
+        "client_id": {
+          "type": "string",
+          "description": "Google API client ID"
+        },
+        "client_secret": {
+          "type": "string",
+          "description": "Google API client secret"
+        },
+        "refresh_token": {
+          "type": "string",
+          "description": "OAuth refresh token"
+        },
+        "token": {
+          "type": "string",
+          "description": "OAuth access token"
+        },
+        "token_uri": {
+          "type": "string",
+          "description": "Token URI",
+          "default": "https://oauth2.googleapis.com/token"
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Additional settings for the MCP server",
+      "properties": {
+        "max_results_default": {
+          "type": "integer",
+          "description": "Default maximum number of results to return from queries",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "allowed_mime_types": {
+          "type": "array",
+          "description": "Mime types to include in searches (empty means all)",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+} 
