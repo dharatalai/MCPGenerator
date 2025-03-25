@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -9,8 +13,8 @@ import os
 import secrets
 from dotenv import load_dotenv
 
-from ...db.database import get_db
-from ...db.models.user import User
+from db.database import get_db
+from db.models.user import User
 
 # Load environment variables
 load_dotenv()
