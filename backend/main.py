@@ -5,17 +5,21 @@ from dotenv import load_dotenv
 
 # Import routers
 from api.generators.router import router as generators_router
-# from api.auth import router as auth_router
+from api.test_router import router as test_router
+from api.auth.router import router as auth_router
 # from api.servers import router as servers_router
 # from api.templates import router as templates_router
+
+# Import Supabase client
+from db.supabase_client import supabase
 
 # Load environment variables
 load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="MCP SaaS API",
-    description="API for creating and managing MCP servers",
+    title="MCP SaaS API (Supabase)",
+    description="API for creating and managing MCP servers using Supabase",
     version="0.1.0",
 )
 
@@ -31,16 +35,28 @@ app.add_middleware(
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "Welcome to MCP SaaS API"}
+    return {"message": "Welcome to MCP SaaS API (Supabase)"}
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    # Check Supabase connection
+    try:
+        # Simple query to check connection
+        response = supabase.table('templates').select('*').limit(1).execute()
+        db_status = "connected" if not hasattr(response, 'error') or not response.error else "error"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
+    return {
+        "status": "healthy",
+        "database": db_status
+    }
 
 # Include routers
 app.include_router(generators_router, prefix="/generators", tags=["MCP Generators"])
-# app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+app.include_router(test_router, prefix="/test", tags=["Test Endpoints"])
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 # app.include_router(servers_router, prefix="/servers", tags=["MCP Servers"])
 # app.include_router(templates_router, prefix="/templates", tags=["Server Templates"])
 

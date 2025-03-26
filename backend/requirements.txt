@@ -1,15 +1,15 @@
 fastapi>=0.103.1
 uvicorn>=0.23.2
 pydantic>=2.3.0
-sqlalchemy>=2.0.20
-alembic>=1.12.0
+# sqlalchemy>=2.0.20  # Removed in favor of Supabase
+# alembic>=1.12.0  # Removed in favor of Supabase
 python-jose>=3.3.0
 passlib>=1.7.4
 python-multipart>=0.0.6
 mcp>=1.4.1
 jinja2>=3.1.2
 python-dotenv>=1.0.0
-psycopg2-binary>=2.9.7
+# psycopg2-binary>=2.9.7  # Not needed with Supabase client
 cryptography>=41.0.3
 pyyaml>=6.0.1
 pytest>=7.4.2
@@ -22,4 +22,10 @@ fastmcp>=0.2.0
 langchain-core>=0.1.0
 langchain>=0.0.300
 asyncio>=3.4.3
-requests>=2.31.0 
+requests>=2.31.0
+# Added Supabase dependencies
+supabase>=1.0.3
+gotrue>=1.0.1
+postgrest>=0.10.6
+# Added async file I/O for non-blocking operations
+aiofiles>=23.2.1
