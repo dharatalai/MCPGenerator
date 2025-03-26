@@ -14,4 +14,11 @@ ENV/
 .DS_Store
 .idea/
 .vscode/
+node_modules/
+.cache/
+frontend/node_modules/
+frontend/.cache/
+**/node_modules/
+**/.cache/
+*.pack
 " > .gitignore
