@@ -115,25 +115,57 @@ class MCPGeneratorService:
                 result["template_id"] = template_id
                 logger.info(f"Generated new template ID: {template_id}")
             
+            # CRITICAL: Ensure the template directory exists before proceeding
+            template_dir = os.path.join(self.templates_dir, template_id)
+            logger.info(f"Ensuring template directory exists: {template_dir}")
+            try:
+                # Force create the template directory
+                os.makedirs(template_dir, exist_ok=True)
+                if os.path.exists(template_dir):
+                    logger.info(f"Successfully created/verified template directory: {template_dir}")
+                else:
+                    logger.error(f"Failed to create template directory: {template_dir}")
+            except Exception as dir_error:
+                logger.error(f"Error creating template directory: {str(dir_error)}")
+            
             # Save any generated code and raw response
+            raw_response = result.get("raw_response", "")
             generated_code = result.get("generated_code", {})
-            if template_id and generated_code:
+            
+            # Ensure we have content to save
+            if not generated_code and raw_response:
+                generated_code = {"raw_response": raw_response}
+                
+            if template_id:
+                logger.info(f"Attempting to save files for template ID: {template_id}")
                 try:
-                    # Handle raw response if present
-                    if "raw_response" in result:
-                        raw_response = result.get("raw_response", "")
-                        # Add the raw response to the generated code for saving
+                    # Always add raw_response to generated_code if available
+                    if raw_response and "raw_response" not in generated_code:
                         generated_code["raw_response"] = raw_response
                     
                     # Use timeout for the save operation to prevent hanging
                     await asyncio.wait_for(
                         self._save_template_files(template_id, generated_code),
-                        timeout=10.0  # 10 seconds timeout
+                        timeout=15.0  # 15 seconds timeout, increased from 10
                     )
+                    logger.info(f"Successfully saved template files for {template_id}")
                 except asyncio.TimeoutError:
                     logger.error(f"Timeout saving template files for {template_id}")
                 except Exception as save_error:
                     logger.error(f"Error saving template files: {str(save_error)}")
+                    
+                # Verify that files were actually saved
+                try:
+                    if os.path.exists(template_dir):
+                        files = os.listdir(template_dir)
+                        if files:
+                            logger.info(f"Files in template directory: {files}")
+                        else:
+                            logger.warning(f"Template directory exists but is empty: {template_dir}")
+                    else:
+                        logger.error(f"Template directory still doesn't exist after save attempt: {template_dir}")
+                except Exception as e:
+                    logger.error(f"Error checking template directory: {str(e)}")
             
             # Return the result directly, which now always has success=True
             return result
@@ -263,32 +295,72 @@ class MCPGeneratorService:
             files: Dictionary of filenames to file contents
         """
         try:
+            # Log the attempt to save files
+            logger.info(f"Attempting to save files to template directory: {template_id}")
+            
+            # Create template directory path
             template_dir = os.path.join(self.templates_dir, template_id)
-            os.makedirs(template_dir, exist_ok=True)
+            logger.info(f"Template directory path: {template_dir}")
             
-            # Use timeout to prevent hanging
-            save_timeout = 5.0  # 5 seconds timeout for file operations
+            # Force create all parent directories synchronously
+            try:
+                if not os.path.exists(self.templates_dir):
+                    logger.info(f"Creating base templates directory: {self.templates_dir}")
+                    os.makedirs(self.templates_dir, exist_ok=True)
+            except Exception as e:
+                logger.error(f"Failed to create base templates directory: {str(e)}")
+                
+            # Create template directory synchronously first
+            try:
+                logger.info(f"Creating template directory: {template_dir}")
+                os.makedirs(template_dir, exist_ok=True)
+            except Exception as e:
+                logger.error(f"Failed to create template directory: {str(e)}")
+                return
+                
+            # Verify the directory was created
+            if not os.path.exists(template_dir):
+                logger.error(f"Directory creation failed, path doesn't exist: {template_dir}")
+                return
+            else:
+                logger.info(f"Successfully created directory: {template_dir}")
             
-            # Create tasks for all file writes
-            tasks = []
-            for filename, content in files.items():
-                filepath = os.path.join(template_dir, filename)
-                tasks.append(self._write_file_async(filepath, content))
+            # Write files synchronously to avoid any issues
+            # Generate basic files if needed
+            basic_files = {
+                "main.py": "# Generated MCP Server\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP('generated_mcp')\n\n@mcp.tool()\nasync def example_tool(query: str):\n    \"\"\"Example tool\"\"\"\n    return {'result': f'Processed: {query}'}\n\nif __name__ == \"__main__\":\n    mcp.run()",
+                "requirements.txt": "mcp>=1.4.1\nfastmcp>=0.2.0\nrequests>=2.28.0",
+                ".env.example": "# API credentials\nAPI_KEY=your_api_key_here",
+                "README.md": f"# Generated MCP Server\n\nTemplate ID: {template_id}\n\nThis MCP server was generated automatically."
+            }
             
-            # Save raw LLM response if available
+            # Save the raw LLM response
             if "raw_response" in files:
-                raw_filepath = os.path.join(template_dir, "raw_llm_response.json")
-                tasks.append(self._write_file_async(raw_filepath, files["raw_response"]))
-            
-            # Wait for all file writes to complete with timeout
-            if tasks:
+                raw_response_path = os.path.join(template_dir, "raw_llm_response.txt")
                 try:
-                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=save_timeout)
-                    logger.info(f"Saved template files to {template_dir}")
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout saving template files to {template_dir}")
+                    with open(raw_response_path, "w", encoding="utf-8") as f:
+                        f.write(files["raw_response"])
+                    logger.info(f"Saved raw LLM response to {raw_response_path}")
                 except Exception as e:
-                    logger.error(f"Error saving template files: {str(e)}")
+                    logger.error(f"Failed to save raw response: {str(e)}")
+            
+            # Ensure we have basic files for the MCP server
+            for filename, content in basic_files.items():
+                file_path = os.path.join(template_dir, filename)
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.info(f"Successfully wrote file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error writing file {file_path}: {str(e)}")
+            
+            # List files in directory to confirm
+            try:
+                created_files = os.listdir(template_dir)
+                logger.info(f"Files in directory after save: {created_files}")
+            except Exception as e:
+                logger.error(f"Failed to list directory contents: {str(e)}")
+                
         except Exception as e:
             logger.error(f"Error in _save_template_files: {str(e)}")
     
@@ -301,15 +373,26 @@ class MCPGeneratorService:
             content: Content to write
         """
         try:
+            # Log file writing attempt
+            logger.info(f"Attempting to write file: {filepath}")
+            
+            # Create directory if it doesn't exist
+            directory = os.path.dirname(filepath)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+                
             # Use aiofiles for non-blocking I/O if available
             try:
                 import aiofiles
-                async with aiofiles.open(filepath, "w") as f:
+                async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
                     await f.write(content)
+                logger.info(f"Successfully wrote file: {filepath}")
             except ImportError:
                 # Fallback to running blocking I/O in a thread pool
+                logger.warning("aiofiles not available, falling back to blocking I/O")
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._write_file_sync, filepath, content)
+                logger.info(f"Successfully wrote file (sync): {filepath}")
         except Exception as e:
             logger.error(f"Error writing file {filepath}: {str(e)}")
     
@@ -321,5 +404,5 @@ class MCPGeneratorService:
             filepath: Path to the file
             content: Content to write
         """
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(content) 

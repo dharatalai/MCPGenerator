@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 import logging
 import uuid
+import os
 
 # Import generator service
 from engine.generator.mcp_generator_service import MCPGeneratorService
@@ -185,4 +186,86 @@ async def list_servers(user_id: str = Depends(get_authenticated_user_id)):
         logger.error(f"Error listing servers: {str(e)}")
         
         # Return an empty list rather than error
-        return [] 
+        return []
+
+@router.get("/template-files/{template_id}", response_model=List[Dict[str, Any]])
+async def get_template_files(template_id: str):
+    """Get all files for a template."""
+    try:
+        # Build the path to the template directory
+        template_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "templates", "generated", template_id
+        )
+        
+        # Check if directory exists
+        if not os.path.exists(template_dir):
+            logging.warning(f"Template directory not found: {template_dir}")
+            return []
+        
+        result = []
+        
+        # Walk the directory and get all files and directories
+        for root, dirs, files in os.walk(template_dir):
+            # Add directories
+            for dir_name in dirs:
+                dir_path = os.path.join(root, dir_name)
+                rel_path = os.path.relpath(dir_path, template_dir)
+                result.append({
+                    "name": dir_name,
+                    "path": rel_path,
+                    "is_dir": True
+                })
+            
+            # Add files
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                rel_path = os.path.relpath(file_path, template_dir)
+                result.append({
+                    "name": file_name,
+                    "path": rel_path,
+                    "is_dir": False
+                })
+        
+        return result
+    except Exception as e:
+        logging.error(f"Error getting template files: {str(e)}")
+        return []
+
+@router.get("/file-content/{template_id}")
+async def get_file_content(template_id: str, file_path: str):
+    """Get content of a specific file."""
+    try:
+        # Build the full path to the file
+        template_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "templates", "generated", template_id
+        )
+        full_path = os.path.join(template_dir, file_path)
+        
+        # Security check - make sure the file is actually within the template directory
+        if not os.path.abspath(full_path).startswith(os.path.abspath(template_dir)):
+            logging.warning(f"Attempted to access file outside template directory: {full_path}")
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Check if file exists
+        if not os.path.exists(full_path) or not os.path.isfile(full_path):
+            logging.warning(f"File not found: {full_path}")
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Read file content
+        try:
+            with open(full_path, "r") as f:
+                content = f.read()
+            
+            return {"content": content}
+        except UnicodeDecodeError:
+            # If it's a binary file, return an error
+            logging.warning(f"Cannot read binary file: {full_path}")
+            raise HTTPException(status_code=400, detail="Cannot read binary file")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting file content: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}") 

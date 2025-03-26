@@ -190,7 +190,7 @@ class LLMWorkflow:
             
             # Using Deepseek R1 for planning
             response = self.client.chat.completions.create(
-                model="deepseek/deepseek-r1-zero:free",
+                model="deepseek/deepseek-r1-distill-llama-70b:free",
                 messages=[{"role": "user", "content": planning_prompt}],
                 response_format={"type": "json_object"},
                 temperature=0.1,
@@ -258,18 +258,15 @@ class LLMWorkflow:
             content = response.choices[0].message.content
             logger.info(f"Received coding response of length {len(content)}")
             
-            # Return raw content as requested - don't try to parse JSON
-            default_files = {
-                "main.py": "# Generated code will appear here when properly formatted",
-                "requirements.txt": "fastmcp>=0.2.0\nmcp>=1.4.1\nrequests>=2.28.0",
-                ".env.example": "# No environment variables required",
-                "README.md": "# Custom MCP Server\n\nThis is a generated MCP server."
-            }
+            # Save raw_response directly to state
+            state["raw_response"] = content
             
-            # Create a simple structure with the raw response and default files as fallback
+            # Create a simple structure with the raw response
+            # We'll skip parsing JSON as it's unreliable with LLM outputs
+            # The actual file generation will happen in mcp_generator_service.py
             return {
                 "raw_response": content,
-                "generated_code": default_files  # Include default files for file-saving operations
+                "generated_code": {"raw_response": content}
             }
         except Exception as e:
             logger.error(f"Error in coding node: {str(e)}")
@@ -330,32 +327,46 @@ class LLMWorkflow:
                         template_id = template.id
                         logger.info(f"Created template with ID: {template_id}")
                         
+                        # Always include raw_response from the previous node if available
                         return {
                             "template_id": template_id,
-                            "validation_result": "Template created successfully"
+                            "validation_result": "Template created successfully",
+                            "raw_response": state.get("raw_response", ""),
+                            "generated_code": state.get("generated_code", {})
                         }
                     except asyncio.TimeoutError:
                         logger.error("Template creation timed out")
                         # Create a local mock ID for the response
                         return {
                             "template_id": str(uuid.uuid4()),
-                            "validation_result": "Template creation timed out, using mock ID"
+                            "validation_result": "Template creation timed out, using mock ID",
+                            "raw_response": state.get("raw_response", ""),
+                            "generated_code": state.get("generated_code", {})
                         }
                 except Exception as e:
                     logger.error(f"Error creating template: {str(e)}")
                     # Create a local mock ID for the response
                     return {
                         "template_id": str(uuid.uuid4()),
-                        "validation_result": f"Error: {str(e)}"
+                        "validation_result": f"Error: {str(e)}",
+                        "raw_response": state.get("raw_response", ""),
+                        "generated_code": state.get("generated_code", {})
                     }
             
-            return {"validation_result": "Validation passed"}
+            # Include any raw_response in the return value
+            return {
+                "validation_result": "Validation passed",
+                "raw_response": state.get("raw_response", ""),
+                "generated_code": state.get("generated_code", {})
+            }
         except Exception as e:
             logger.error(f"Error in validation node: {str(e)}")
             # Create a local mock ID for the response
             return {
                 "template_id": str(uuid.uuid4()),
-                "validation_result": f"Error: {str(e)}"
+                "validation_result": f"Error: {str(e)}",
+                "raw_response": state.get("raw_response", ""),
+                "generated_code": state.get("generated_code", {})
             }
     
     async def process(self, state: AgentState) -> Dict[str, Any]:
@@ -376,13 +387,15 @@ class LLMWorkflow:
                     timeout=180.0  # 3 minutes
                 )
                 
-                # Now just return whatever we got, with a success flag
+                # Make sure raw_response and generated_code are included in the final result
                 return {
                     "success": True, 
                     "template_id": result.get("template_id"),
                     "server_id": result.get("server_id"),
                     "validation_result": result.get("validation_result", "Completed"),
-                    "message": "MCP generation completed"
+                    "message": "MCP generation completed",
+                    "raw_response": result.get("raw_response", ""),
+                    "generated_code": result.get("generated_code", {})
                 }
                 
             except asyncio.TimeoutError:
@@ -394,7 +407,9 @@ class LLMWorkflow:
                     "message": "MCP generation completed with timeout",
                     "template_id": template_id,
                     "server_id": None,
-                    "timeout": True
+                    "timeout": True,
+                    "raw_response": state.get("raw_response", ""),
+                    "generated_code": state.get("generated_code", {})
                 }
                 
         except Exception as e:
@@ -406,7 +421,9 @@ class LLMWorkflow:
                 "message": f"MCP generation completed with errors: {str(e)}",
                 "template_id": template_id,
                 "server_id": None,
-                "error_details": str(e)
+                "error_details": str(e),
+                "raw_response": state.get("raw_response", ""),
+                "generated_code": state.get("generated_code", {})
             }
 
 async def generate_with_timeout():

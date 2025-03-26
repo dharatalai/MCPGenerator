@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
+import logging
 
 # Import routers
 from api.generators.router import router as generators_router
@@ -16,6 +17,15 @@ from db.supabase_client import supabase
 # Load environment variables
 load_dotenv()
 
+# Ensure templates directory exists
+templates_dir = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "templates",
+    "generated"
+)
+os.makedirs(templates_dir, exist_ok=True)
+logging.info(f"Verified templates directory exists: {templates_dir}")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="MCP SaaS API (Supabase)",
@@ -26,7 +36,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for production
+    allow_origins=["*"],  # For development, in production specify actual frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
