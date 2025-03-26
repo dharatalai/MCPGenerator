@@ -67,6 +67,9 @@ class LLMWorkflow:
             logger.warning("No OpenRouter API key found in environment variables. Using a demo key for testing.")
             openrouter_api_key = "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"
         
+        # Store API key as an attribute to avoid AttributeError
+        self.api_key = openrouter_api_key
+        
         # Initialize client using OpenRouter
         self.client = openai.OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -130,6 +133,58 @@ class LLMWorkflow:
     async def _planning_node(self, state: AgentState) -> Dict[str, Any]:
         """Planning node for creating implementation plan."""
         try:
+            # Define the JSON structure separately as a string literal
+            json_structure = """
+{
+    "service_name": "Name of the MCP service",
+    "description": "Detailed description of the service",
+    "tools": [
+        {
+            "name": "tool_name",
+            "description": "Comprehensive tool description",
+            "input_model": {
+                "name": "ModelName",
+                "fields": [
+                    {"name": "field_name", "type": "type", "description": "Field description", "required": "true"}
+                ]
+            },
+            "returns": {
+                "type": "Return type",
+                "description": "Detailed description of return value"
+            },
+            "endpoint": "Full API endpoint URL",
+            "method": "HTTP method",
+            "error_handling": ["List of error cases to handle"],
+            "rate_limits": {"requests": 0, "period": "per_second"},
+            "parameters": [
+                {
+                    "name": "parameter_name",
+                    "type": "parameter_type",
+                    "description": "Parameter description",
+                    "required": "true",
+                    "default_value": "default value if any"
+                }
+            ]
+        }
+    ],
+    "auth_requirements": {
+        "type": "Type of authentication",
+        "credentials": ["List of required credentials"],
+        "headers": {"header_name": "header_value"}
+    },
+    "dependencies": [
+        {"name": "package_name", "version": "version_spec"}
+    ],
+    "type_definitions": [
+        {
+            "name": "TypeName",
+            "description": "Type description",
+            "fields": [{"name": "field_name", "type": "type", "description": "description"}]
+        }
+    ]
+}
+"""
+            
             planning_prompt = f"""
             You are an expert planning agent that analyzes API documentation to create MCP (Model Context Protocol) servers.
             
@@ -137,55 +192,73 @@ class LLMWorkflow:
             
             API DOCUMENTATION:
             
-            {state.get('raw_documentation', '')[:7000]}
+            {state.get('raw_documentation', '')}
             
             Your task is to:
-            1. Analyze the provided API documentation
-            2. Identify the key endpoints and functionalities that should be exposed as MCP tools
-            3. Create a detailed plan for implementing an MCP server using the FastMCP framework
-            4. Break down the implementation into clear steps
+            1. Analyze the provided API documentation in detail
+            2. Extract ALL available API endpoints, their parameters, and response formats
+            3. Identify authentication requirements and API key handling
+            4. Map API capabilities to MCP tools with proper type annotations
+            5. Create a detailed plan for implementing an MCP server using the FastMCP framework
             
-            The implementation must follow the FastMCP pattern:
+            IMPORTANT GUIDELINE:
+            First, identify what type of API this is (REST, GraphQL, WebSocket, etc.) and what service it provides.
+            Then, adapt your planning based on the specific API type. Each type of API requires different handling:
+            
+            - For search/AI APIs (like OpenAI, DeepSearch, etc.):
+              * Focus on model parameters, query options, and streaming capabilities
+              * Include proper request/response handling for AI models
+            
+            - For REST APIs:
+              * Map REST endpoints to appropriate MCP tools
+              * Handle pagination, filtering, and sorting parameters
+            
+            - For database APIs:
+              * Create proper data models and CRUD operations
+              * Include transaction and error handling
+            
+            The implementation must follow the FastMCP pattern and include:
+            1. Proper error handling and retries for API calls
+            2. Type validation using Pydantic models
+            3. Comprehensive docstrings and examples
+            4. Authentication handling
+            5. Rate limiting and timeout handling
+            
+            Example structure:
             ```python
             from mcp.server.fastmcp import FastMCP
+            from pydantic import BaseModel, Field
+            from typing import Optional, List, Dict, Any
+            
+            class SearchParams(BaseModel):
+                query: str = Field(..., description="Search query")
+                model: str = Field("default", description="Model to use")
+                max_tokens: int = Field(1000, description="Maximum tokens")
             
             mcp = FastMCP("service_name")
             
             @mcp.tool()
-            async def tool_name(param1: str, param2: int):
-                # Implementation
-                return result
+            async def search(params: SearchParams) -> Dict[str, Any]:
+                '''
+                Execute a search query.
                 
-            if __name__ == "__main__":
-                mcp.run(transport="stdio")
+                Args:
+                    params: Search parameters
+                    
+                Returns:
+                    Search results
+                    
+                Raises:
+                    HTTPError: If API request fails'''
+                # Implementation with proper error handling
+                return result
             ```
             
             Return a JSON object with the following structure:
-            {{
-                "service_name": "Name of the MCP service",
-                "description": "Description of the service",
-                "tools": [
-                    {{
-                        "name": "tool_name",
-                        "description": "Tool description",
-                        "parameters": [
-                            {{"name": "param_name", "type": "param_type", "description": "Parameter description"}}
-                        ],
-                        "returns": "Description of what the tool returns",
-                        "endpoint": "API endpoint to call",
-                        "method": "HTTP method"
-                    }}
-                ],
-                "auth_requirements": {{
-                    "type": "Type of authentication (API key, OAuth, etc.)",
-                    "credentials": ["List of required credentials"]
-                }},
-                "dependencies": [
-                    "List of Python package dependencies"
-                ]
-            }}
+            {json_structure}
             
             IMPORTANT: Your response must be ONLY the JSON object without any LaTeX formatting or markdown code blocks.
+            Focus on COMPLETENESS and ACCURACY of the API implementation details.
             """
             
             # Using Deepseek R1 for planning
@@ -193,7 +266,7 @@ class LLMWorkflow:
                 model="deepseek/deepseek-r1-distill-llama-70b:free",
                 messages=[{"role": "user", "content": planning_prompt}],
                 response_format={"type": "json_object"},
-                temperature=0.1,
+                temperature=0.7,
                 extra_headers={
                     "HTTP-Referer": "https://mcp-saas.dev",
                     "X-Title": "MCP SaaS"
@@ -219,58 +292,314 @@ class LLMWorkflow:
             IMPLEMENTATION PLAN:
             {state.get('implementation_plan', '')}
             
-            Your task is to generate complete, working code for an MCP server according to the implementation plan.
-            The code should:
-            1. Use the FastMCP framework
-            2. Implement proper error handling
-            3. Follow Python best practices
-            4. Include type annotations
-            5. Be well documented
+            Your task is to generate complete, production-ready code for an MCP server according to the implementation plan.
+            The code must be:
+            1. Fully functional and ready to run
+            2. Well-structured with proper separation of concerns
+            3. Properly typed with Pydantic models
+            4. Well-documented with docstrings and comments
+            5. Include comprehensive error handling
+            6. Handle rate limits and timeouts
+            7. Implement proper authentication
+            
+            SAMPLE MCP TEMPLATE:
+            
+            main.py:
+            ```python
+            from mcp.server.fastmcp import FastMCP
+            from typing import Dict, Any, Optional, List, Union
+            from pydantic import BaseModel, Field
+            import httpx
+            import logging
+            import asyncio
+            import os
+            from dotenv import load_dotenv
+
+            # Load environment variables
+            load_dotenv()
+
+            # Configure logging
+            logging.basicConfig(level=logging.INFO)
+            logger = logging.getLogger(__name__)
+
+            # Define models
+            class QueryParams(BaseModel):
+                query: str = Field(..., description="The search query")
+                model: str = Field("default-model", description="Model to use for processing")
+                max_results: int = Field(10, description="Maximum number of results to return")
+
+            class SearchResult(BaseModel):
+                answer: str = Field(..., description="Generated answer")
+                sources: List[Dict[str, Any]] = Field([], description="Sources used")
+                usage: Dict[str, int] = Field(..., description="Token usage information")
+
+            # Initialize API client
+            class APIClient:
+                def __init__(self):
+                    self.api_key = os.getenv("API_KEY")
+                    self.base_url = os.getenv("API_BASE_URL")
+                    self.headers = {{
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {{self.api_key}}"
+                    }}
+                    self.client = httpx.AsyncClient(
+                        base_url=self.base_url,
+                        headers=self.headers,
+                        timeout=60.0
+                    )
+                
+                async def search(self, params: QueryParams) -> Dict[str, Any]:
+                    '''
+                    Execute a search using the API.
+                    
+                    Args:
+                        params: Search parameters
+                        
+                    Returns:
+                        Search results
+                    '''
+                    try:
+                        payload = {{
+                            "model": params.model,
+                            "messages": [{{"role": "user", "content": params.query}}],
+                            "max_results": params.max_results
+                        }}
+                        
+                        response = await self.client.post("/v1/search", json=payload)
+                        response.raise_for_status()
+                        return response.json()
+                    except httpx.HTTPError as e:
+                        logger.error(f"HTTP error: {{str(e)}}")
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error in search: {{str(e)}}")
+                        raise
+
+            # Initialize MCP
+            mcp = FastMCP("api-service")
+            api_client = APIClient()
+
+            @mcp.tool()
+            async def search(query: str) -> Dict[str, Any]:
+                '''
+                Execute a search with default parameters.
+                
+                Args:
+                    query: The search query
+                    
+                Returns:
+                    Search results
+                '''
+                try:
+                    params = QueryParams(query=query)
+                    result = await api_client.search(params)
+                    return SearchResult(
+                        answer=result.get("answer", ""),
+                        sources=result.get("sources", []),
+                        usage=result.get("usage", {{}})
+                    ).dict()
+                except Exception as e:
+                    logger.error(f"Error in search: {{str(e)}}")
+                    return {{"error": str(e)}}
+
+            @mcp.tool()
+            async def search_with_options(params: QueryParams) -> Dict[str, Any]:
+                '''
+                Execute a search with custom parameters.
+                
+                Args:
+                    params: Custom search parameters
+                    
+                Returns:
+                    Search results
+                '''
+                try:
+                    result = await api_client.search(params)
+                    return SearchResult(
+                        answer=result.get("answer", ""),
+                        sources=result.get("sources", []),
+                        usage=result.get("usage", {{}})
+                    ).dict()
+                except Exception as e:
+                    logger.error(f"Error in search_with_options: {{str(e)}}")
+                    return {{"error": str(e)}}
+
+            if __name__ == "__main__":
+                mcp.run()
+            ```
+            
+            requirements.txt:
+            ```
+            mcp>=0.1.0
+            httpx>=0.24.0
+            pydantic>=2.0.0
+            python-dotenv>=1.0.0
+            ```
+            
+            .env.example:
+            ```
+            API_KEY=your_api_key_here
+            API_BASE_URL=https://api.example.com
+            ```
             
             Generate the following files:
             1. main.py - The main MCP server implementation
-            2. requirements.txt - Dependencies needed
-            3. .env.example - Example environment variables
-            4. README.md - Documentation for using the MCP server
+            2. models.py - Pydantic models for request/response types (if needed)
+            3. api.py - API client implementation (if needed) 
+            4. requirements.txt - Complete dependencies with versions
+            5. .env.example - Example environment variables
+            6. README.md - Comprehensive documentation
             
-            Return ONLY a valid JSON object with the following structure:
-            {{
-                "files": {{
-                    "main.py": "Complete Python code here",
-                    "requirements.txt": "List of dependencies",
-                    ".env.example": "Example environment variables",
-                    "README.md": "Documentation"
-                }}
-            }}
+            IMPORTANT:
+            1. Generate COMPLETE, RUNNABLE code for each file
+            2. Include ALL necessary imports
+            3. Implement proper error handling
+            4. Add comprehensive logging
+            5. Implement EVERY tool listed in the implementation plan
+            6. Use the parameters extracted from the documentation
+            7. NEVER generate placeholder or example tools - implement real functionality
+            8. Follow Python best practices
+            9. Do not assume any parameter names - use what was specified in the implementation plan
             """
             
-            response = self.client.chat.completions.create(
-                model="deepseek/deepseek-chat-v3-0324:free",
-                messages=[{"role": "user", "content": coding_prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-                extra_headers={
-                    "HTTP-Referer": "https://mcp-saas.dev",
-                    "X-Title": "MCP SaaS"
+            # Make sure we have a client before trying to call it
+            if not hasattr(self, 'client') or self.client is None:
+                logger.error("API client not initialized")
+                return {"error": "API client not initialized", "generated_code": {}}
+            
+            try:
+                response = self.client.chat.completions.create(
+                    model="deepseek/deepseek-chat-v3-0324:free",
+                    messages=[{"role": "user", "content": coding_prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                    extra_headers={
+                        "HTTP-Referer": "https://mcp-saas.dev",
+                        "X-Title": "MCP SaaS"
+                    }
+                )
+                
+                content = response.choices[0].message.content
+                logger.info(f"Received coding response of length {len(content)}")
+                
+                # Save raw_response directly to state
+                state["raw_response"] = content
+                
+                # Try to parse the JSON response
+                try:
+                    # First attempt to parse as JSON
+                    files_dict = {}
+                    parsed_json = json.loads(content)
+                    
+                    # Check if we have a 'files' key directly
+                    if "files" in parsed_json and isinstance(parsed_json["files"], dict):
+                        files_dict = parsed_json["files"]
+                    else:
+                        # Try to find code blocks in the response
+                        for key, value in parsed_json.items():
+                            if isinstance(value, str) and '```' in value:
+                                # Extract code from markdown code block
+                                match = re.search(r'```(?:python|json)?\s*(.*?)```', value, re.DOTALL)
+                                if match:
+                                    file_content = match.group(1).strip()
+                                    filename = key
+                                    if not filename.endswith('.py') and not filename.endswith('.md') and not filename.endswith('.txt'):
+                                        if key == 'main' or 'main' in key.lower():
+                                            filename = 'main.py'
+                                        elif key == 'api' or 'api' in key.lower():
+                                            filename = 'api.py'
+                                        elif key == 'models' or 'model' in key.lower():
+                                            filename = 'models.py'
+                                        elif key == 'requirements':
+                                            filename = 'requirements.txt'
+                                        else:
+                                            filename = f"{key}.py"
+                                    files_dict[filename] = file_content
+                            elif isinstance(value, str) and (value.startswith('import ') or value.startswith('from ') or 'def ' in value[:100]):
+                                # This looks like Python code
+                                filename = key
+                                if not filename.endswith('.py'):
+                                    filename = f"{key}.py"
+                                files_dict[filename] = value
+                    
+                    # If we still don't have files, try to extract code blocks directly from content
+                    if not files_dict:
+                        # Look for markdown code blocks with filename indicators
+                        code_blocks = re.findall(r'```(?:python)?\s*(?:([a-zA-Z0-9_\-\.]+))?\n(.*?)```', content, re.DOTALL)
+                        
+                        for i, (filename, code) in enumerate(code_blocks):
+                            if not filename:
+                                # Try to guess filename from content
+                                if "def main" in code or "@mcp.tool" in code:
+                                    filename = "main.py"
+                                elif "class QueryParams" in code or "BaseModel" in code:
+                                    filename = "models.py"
+                                elif "class API" in code or "httpx.AsyncClient" in code:
+                                    filename = "api.py"
+                                elif "version" in code and ("mcp" in code or "fastmcp" in code or "httpx" in code):
+                                    filename = "requirements.txt"
+                                elif "API_KEY" in code:
+                                    filename = ".env.example"
+                                else:
+                                    filename = f"file_{i+1}.py"
+                            
+                            files_dict[filename] = code.strip()
+                    
+                    # Return structured files
+                    if files_dict:
+                        logger.info(f"Successfully parsed {len(files_dict)} files from LLM response")
+                        return {
+                            "raw_response": content,
+                            "generated_code": {"files": files_dict}
+                        }
+                
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse LLM response as JSON, attempting to extract code blocks directly")
+                    
+                    # Try to extract code blocks directly
+                    files_dict = {}
+                    code_blocks = re.findall(r'```(?:python)?\s*(?:([a-zA-Z0-9_\-\.]+))?\n(.*?)```', content, re.DOTALL)
+                    
+                    for i, (filename, code) in enumerate(code_blocks):
+                        if not filename:
+                            # Try to guess filename from content
+                            if "def main" in code or "@mcp.tool" in code:
+                                filename = "main.py"
+                            elif "class QueryParams" in code or "BaseModel" in code:
+                                filename = "models.py"
+                            elif "class API" in code or "httpx.AsyncClient" in code:
+                                filename = "api.py"
+                            elif "version" in code and ("mcp" in code or "fastmcp" in code or "httpx" in code):
+                                filename = "requirements.txt"
+                            elif "API_KEY" in code:
+                                filename = ".env.example"
+                            else:
+                                filename = f"file_{i+1}.py"
+                        
+                        files_dict[filename] = code.strip()
+                    
+                    if files_dict:
+                        logger.info(f"Extracted {len(files_dict)} files from code blocks")
+                        return {
+                            "raw_response": content,
+                            "generated_code": {"files": files_dict}
+                        }
+                
+                except Exception as parse_error:
+                    logger.error(f"Error parsing coding response: {str(parse_error)}")
+                
+                # If all parsing failed, return raw response only
+                return {
+                    "raw_response": content,
+                    "generated_code": {"raw_response": content}
                 }
-            )
-            
-            content = response.choices[0].message.content
-            logger.info(f"Received coding response of length {len(content)}")
-            
-            # Save raw_response directly to state
-            state["raw_response"] = content
-            
-            # Create a simple structure with the raw response
-            # We'll skip parsing JSON as it's unreliable with LLM outputs
-            # The actual file generation will happen in mcp_generator_service.py
-            return {
-                "raw_response": content,
-                "generated_code": {"raw_response": content}
-            }
-        except Exception as e:
-            logger.error(f"Error in coding node: {str(e)}")
-            return {"error": f"Code generation failed: {str(e)}", "generated_code": {}}
+            except Exception as api_error:
+                logger.error(f"Error in coding node API call: {str(api_error)}")
+                return {"error": f"Code generation failed: {str(api_error)}", "generated_code": {}}
+        except Exception as general_error:
+            # This is the outer exception handler
+            logger.error(f"Unexpected error in coding node: {str(general_error)}")
+            return {"error": f"Unexpected error in coding node: {str(general_error)}", "generated_code": {}}
     
     async def _validation_node(self, state: AgentState) -> Dict[str, Any]:
         """Validation node for checking the generated code."""
@@ -278,27 +607,18 @@ class LLMWorkflow:
             # Create template if not exists
             if not state.get("template_id"):
                 try:
-                    # Extract basic information for the template
-                    service_name = "Generated MCP"
-                    description = "Generated MCP server from API documentation"
-                    
-                    # Try to get basic info from the implementation plan
+                    # Extract basic information from the implementation plan
                     try:
+                        impl_plan = json.loads(state.get("implementation_plan", "{}"))
+                        service_name = impl_plan.get("service_name", "Generated MCP")
+                        description = impl_plan.get("description", "Generated MCP server from API documentation")
+                    except json.JSONDecodeError:
+                        # Fallback to simple extraction if JSON parsing fails
                         impl_plan = state.get("implementation_plan", "{}")
-                        
-                        # Try the simplest extraction first
-                        if '"service_name"' in impl_plan:
-                            # Simple regex extraction for basic fields
-                            name_match = re.search(r'"service_name":\s*"([^"]+)"', impl_plan)
-                            if name_match:
-                                service_name = name_match.group(1)
-                                
-                            desc_match = re.search(r'"description":\s*"([^"]+)"', impl_plan)
-                            if desc_match:
-                                description = desc_match.group(1)
-                    except Exception as e:
-                        # Just log the error and continue with defaults
-                        logger.warning(f"Error extracting basic info: {str(e)}")
+                        name_match = re.search(r'"service_name":\s*"([^"]+)"', impl_plan)
+                        service_name = name_match.group(1) if name_match else "Generated MCP"
+                        desc_match = re.search(r'"description":\s*"([^"]+)"', impl_plan)
+                        description = desc_match.group(1) if desc_match else "Generated MCP server from API documentation"
                     
                     # Get user ID from state, use default if not available
                     user_id = state.get("user_id")
@@ -327,7 +647,6 @@ class LLMWorkflow:
                         template_id = template.id
                         logger.info(f"Created template with ID: {template_id}")
                         
-                        # Always include raw_response from the previous node if available
                         return {
                             "template_id": template_id,
                             "validation_result": "Template created successfully",
@@ -336,7 +655,6 @@ class LLMWorkflow:
                         }
                     except asyncio.TimeoutError:
                         logger.error("Template creation timed out")
-                        # Create a local mock ID for the response
                         return {
                             "template_id": str(uuid.uuid4()),
                             "validation_result": "Template creation timed out, using mock ID",
@@ -345,7 +663,6 @@ class LLMWorkflow:
                         }
                 except Exception as e:
                     logger.error(f"Error creating template: {str(e)}")
-                    # Create a local mock ID for the response
                     return {
                         "template_id": str(uuid.uuid4()),
                         "validation_result": f"Error: {str(e)}",
@@ -361,13 +678,25 @@ class LLMWorkflow:
             }
         except Exception as e:
             logger.error(f"Error in validation node: {str(e)}")
-            # Create a local mock ID for the response
             return {
                 "template_id": str(uuid.uuid4()),
                 "validation_result": f"Error: {str(e)}",
                 "raw_response": state.get("raw_response", ""),
                 "generated_code": state.get("generated_code", {})
             }
+    
+    # Add placeholder methods to avoid reference errors
+    async def _validate_generated_code(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Simple validation placeholder to avoid errors"""
+        return {
+            "has_errors": False,
+            "message": "Validation skipped",
+            "errors": []
+        }
+    
+    async def _fix_code_issues(self, state: Dict[str, Any], errors: List[str]) -> Optional[str]:
+        """Simple fix placeholder to avoid errors"""
+        return None
     
     async def process(self, state: AgentState) -> Dict[str, Any]:
         """

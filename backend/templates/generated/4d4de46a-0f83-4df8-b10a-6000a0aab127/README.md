@@ -1,5 +1,5 @@
 # Generated MCP Server
 
-Template ID: 283f4576-0b2b-4875-8348-57d94dec8244
+Template ID: 4d4de46a-0f83-4df8-b10a-6000a0aab127
 
 This MCP server was generated automatically.

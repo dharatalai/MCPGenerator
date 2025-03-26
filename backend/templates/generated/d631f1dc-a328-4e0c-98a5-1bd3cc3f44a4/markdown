@@ -1,0 +1,18 @@
+# DeepSearch MCP Server
+
+A Model Context Protocol (MCP) server implementation for the DeepSearch API using FastMCP.
+
+## Features
+
+- Full implementation of DeepSearch API functionality
+- Type-safe input/output validation with Pydantic
+- Automatic retries with exponential backoff
+- Comprehensive error handling
+- Rate limiting awareness
+- Async HTTP client for high performance
+
+## Installation
+
+1. Clone this repository
+2. Create and activate a virtual environment
+3. Install dependencies:

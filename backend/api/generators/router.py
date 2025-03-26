@@ -195,13 +195,24 @@ async def get_template_files(template_id: str):
         # Build the path to the template directory
         template_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "templates", "generated", template_id
+            "engine", "templates", "generated", template_id
         )
         
         # Check if directory exists
         if not os.path.exists(template_dir):
-            logging.warning(f"Template directory not found: {template_dir}")
-            return []
+            logger.warning(f"Template directory not found: {template_dir}")
+            
+            # Double check if old path exists (for backward compatibility)
+            old_template_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "templates", "generated", template_id
+            )
+            
+            if os.path.exists(old_template_dir):
+                logger.info(f"Found template in old location: {old_template_dir}")
+                template_dir = old_template_dir
+            else:
+                return []
         
         result = []
         
@@ -239,8 +250,21 @@ async def get_file_content(template_id: str, file_path: str):
         # Build the full path to the file
         template_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "templates", "generated", template_id
+            "engine", "templates", "generated", template_id
         )
+        
+        # If directory doesn't exist, check old location
+        if not os.path.exists(template_dir):
+            logger.warning(f"Template directory not found: {template_dir}")
+            old_template_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "templates", "generated", template_id
+            )
+            
+            if os.path.exists(old_template_dir):
+                logger.info(f"Found template in old location: {old_template_dir}")
+                template_dir = old_template_dir
+        
         full_path = os.path.join(template_dir, file_path)
         
         # Security check - make sure the file is actually within the template directory

@@ -9,6 +9,7 @@ import asyncio
 import sys
 import uuid
 import aiofiles  # Add import for aiofiles
+import re
 
 # Add parent directory to sys.path to allow imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -39,12 +40,15 @@ class MCPGeneratorService:
         # Base directory for storing generated templates
         self.templates_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "templates",
-            "generated"
+            "engine", "templates", "generated"
         )
         
         # Create directory if it doesn't exist
-        os.makedirs(self.templates_dir, exist_ok=True)
+        try:
+            os.makedirs(self.templates_dir, exist_ok=True)
+            logger.info(f"Created templates directory: {self.templates_dir}")
+        except Exception as e:
+            logger.error(f"Error creating templates directory: {str(e)}")
     
     async def generate_mcp_server(
         self,
@@ -59,15 +63,15 @@ class MCPGeneratorService:
         Generate an MCP server from API documentation.
         
         Args:
-            user_id: ID of the user making the request
-            request_message: User's description of the MCP server to generate
-            doc_url: URL to the API documentation
-            api_credentials: Credentials for accessing the API
-            existing_template_id: Optional ID of an existing template to update
-            existing_server_id: Optional ID of an existing server to update
+            user_id: User ID
+            request_message: User request message
+            doc_url: URL to API documentation
+            api_credentials: API credentials for authentication
+            existing_template_id: Optional existing template ID
+            existing_server_id: Optional existing server ID
             
         Returns:
-            Result of the generation process
+            Dictionary with generation results
         """
         try:
             # Process documentation
@@ -115,57 +119,90 @@ class MCPGeneratorService:
                 result["template_id"] = template_id
                 logger.info(f"Generated new template ID: {template_id}")
             
-            # CRITICAL: Ensure the template directory exists before proceeding
-            template_dir = os.path.join(self.templates_dir, template_id)
-            logger.info(f"Ensuring template directory exists: {template_dir}")
-            try:
-                # Force create the template directory
-                os.makedirs(template_dir, exist_ok=True)
-                if os.path.exists(template_dir):
-                    logger.info(f"Successfully created/verified template directory: {template_dir}")
-                else:
-                    logger.error(f"Failed to create template directory: {template_dir}")
-            except Exception as dir_error:
-                logger.error(f"Error creating template directory: {str(dir_error)}")
-            
-            # Save any generated code and raw response
+            # Extract generated code and raw response
             raw_response = result.get("raw_response", "")
             generated_code = result.get("generated_code", {})
             
-            # Ensure we have content to save
-            if not generated_code and raw_response:
-                generated_code = {"raw_response": raw_response}
-                
-            if template_id:
+            # Check if we have valid JSON code in raw_response
+            if raw_response and not generated_code.get("files"):
+                try:
+                    # Try to parse the raw response as JSON
+                    parsed_json = json.loads(raw_response)
+                    if isinstance(parsed_json, dict) and "files" in parsed_json:
+                        generated_code = parsed_json
+                        logger.info("Successfully parsed raw response as JSON with 'files' key")
+                except json.JSONDecodeError:
+                    # If raw response isn't valid JSON, check if it contains code blocks
+                    logger.warning("Raw response isn't valid JSON, looking for code blocks")
+                    # Further processing could be done here to extract code blocks
+            
+            # Ensure template directory exists
+            template_dir = os.path.join(self.templates_dir, template_id)
+            logger.info(f"Ensuring template directory exists: {template_dir}")
+            
+            try:
+                os.makedirs(template_dir, exist_ok=True)
+                logger.info(f"Successfully created/verified template directory: {template_dir}")
+            except Exception as e:
+                logger.error(f"Error creating template directory: {str(e)}")
+            
+            # Save the files
+            try:
                 logger.info(f"Attempting to save files for template ID: {template_id}")
+                
+                # Wait for save operation with timeout
                 try:
-                    # Always add raw_response to generated_code if available
-                    if raw_response and "raw_response" not in generated_code:
-                        generated_code["raw_response"] = raw_response
-                    
-                    # Use timeout for the save operation to prevent hanging
-                    await asyncio.wait_for(
-                        self._save_template_files(template_id, generated_code),
-                        timeout=15.0  # 15 seconds timeout, increased from 10
-                    )
-                    logger.info(f"Successfully saved template files for {template_id}")
-                except asyncio.TimeoutError:
-                    logger.error(f"Timeout saving template files for {template_id}")
-                except Exception as save_error:
-                    logger.error(f"Error saving template files: {str(save_error)}")
-                    
-                # Verify that files were actually saved
-                try:
-                    if os.path.exists(template_dir):
-                        files = os.listdir(template_dir)
-                        if files:
-                            logger.info(f"Files in template directory: {files}")
-                        else:
-                            logger.warning(f"Template directory exists but is empty: {template_dir}")
+                    # If files exist in generated_code, save those
+                    if isinstance(generated_code, dict) and "files" in generated_code:
+                        await asyncio.wait_for(
+                            self._save_template_files(template_id, raw_response, generated_code["files"]),
+                            timeout=15.0
+                        )
                     else:
-                        logger.error(f"Template directory still doesn't exist after save attempt: {template_dir}")
-                except Exception as e:
-                    logger.error(f"Error checking template directory: {str(e)}")
+                        # If we don't have structured files, try to extract from raw response
+                        try:
+                            # Parse raw response and extract files
+                            parsed_files = self._parse_files_from_raw_response(raw_response)
+                            if parsed_files:
+                                await asyncio.wait_for(
+                                    self._save_template_files(template_id, raw_response, parsed_files),
+                                    timeout=15.0
+                                )
+                            else:
+                                logger.warning("Couldn't extract files from raw response")
+                        except Exception as parse_error:
+                            logger.error(f"Error parsing files from raw response: {str(parse_error)}")
+                            
+                except asyncio.TimeoutError:
+                    logger.error("Save operation timed out after 15 seconds")
+                    
+                # Verify files were saved
+                template_dir = os.path.join(self.templates_dir, template_id)
+                
+                if os.path.exists(template_dir):
+                    files = os.listdir(template_dir)
+                    logger.info(f"Files in template directory: {files}")
+                    
+                    # If directory exists but is empty and we have raw_response, write it directly
+                    if not files and raw_response:
+                        logger.info("Directory exists but no files, writing raw response directly")
+                        try:
+                            main_file_path = os.path.join(template_dir, "main.py")
+                            with open(main_file_path, "w", encoding="utf-8") as f:
+                                # If raw_response looks like valid Python code, save it directly
+                                if "def " in raw_response and "import " in raw_response:
+                                    f.write(raw_response)
+                                else:
+                                    # Otherwise create a simple file with raw_response as a comment
+                                    f.write(f"# Generated MCP Server\n\n'''\nRaw LLM Response:\n{raw_response}\n'''\n\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP('deepsearch_mcp')\n\n# TODO: Implement tools based on the raw LLM response\n\nif __name__ == '__main__':\n    mcp.run()")
+                            logger.info(f"Wrote raw response to {main_file_path}")
+                        except Exception as e:
+                            logger.error(f"Error writing raw response: {str(e)}")
+                else:
+                    logger.error(f"Template directory doesn't exist after save operation: {template_dir}")
+                
+            except Exception as e:
+                logger.error(f"Error saving files: {str(e)}")
             
             # Return the result directly, which now always has success=True
             return result
@@ -286,83 +323,150 @@ class MCPGeneratorService:
                 "error": str(e)
             }
     
-    async def _save_template_files(self, template_id: str, files: Dict[str, str]) -> None:
+    def _parse_files_from_raw_response(self, raw_response: str) -> Dict[str, str]:
         """
-        Save generated files for a template using non-blocking I/O.
+        Parse files from raw LLM response.
         
         Args:
-            template_id: ID of the template
-            files: Dictionary of filenames to file contents
+            raw_response: Raw LLM response
+            
+        Returns:
+            Dictionary of filenames to file contents
         """
         try:
-            # Log the attempt to save files
-            logger.info(f"Attempting to save files to template directory: {template_id}")
+            # Check if the response is JSON
+            try:
+                parsed_json = json.loads(raw_response)
+                if isinstance(parsed_json, dict) and "files" in parsed_json:
+                    return parsed_json["files"]
+            except json.JSONDecodeError:
+                pass
+                
+            # Try to extract code blocks using regex
+            files = {}
             
-            # Create template directory path
+            # Pattern for markdown code blocks: ```filename.ext\ncode\n```
+            code_blocks = re.findall(r'```(?:python)?\s*(?:([a-zA-Z0-9_\-\.]+))?\n(.*?)```', raw_response, re.DOTALL)
+            
+            for i, (filename, code) in enumerate(code_blocks):
+                # Clean up the code - remove trailing whitespace
+                code = code.strip()
+                
+                # If no filename was provided, try to guess based on content
+                if not filename:
+                    if "def main" in code or "@mcp.tool" in code:
+                        filename = "main.py"
+                    elif "BaseModel" in code or "Field(" in code:
+                        filename = "models.py"
+                    elif "class API" in code or "httpx.AsyncClient" in code:
+                        filename = "api.py"
+                    elif "class Settings" in code or "BaseSettings" in code:
+                        filename = "config.py"
+                    elif "mcp" in code and "requirements" in raw_response.lower():
+                        filename = "requirements.txt"
+                    elif "API_KEY" in code:
+                        filename = ".env.example"
+                    elif "# " in code and "Usage" in code:
+                        filename = "README.md"
+                    else:
+                        filename = f"file_{i+1}.py"
+                
+                files[filename] = code
+            
+            # Look for Python file content without code blocks
+            if not files:
+                if "def " in raw_response and "import " in raw_response:
+                    files["main.py"] = raw_response
+            
+            return files
+        except Exception as e:
+            logger.error(f"Error parsing files from raw response: {str(e)}")
+            return {}
+
+    async def _save_template_files(self, template_id: str, raw_response: Optional[str], generated_code: Optional[Dict[str, str]]) -> bool:
+        """
+        Save generated files to the template directory.
+        
+        Args:
+            template_id: Template ID
+            raw_response: Raw LLM response
+            generated_code: Dictionary of filenames to file contents
+            
+        Returns:
+            True if files were saved successfully, False otherwise
+        """
+        try:
+            # Log the attempt
+            logger.info(f"Attempting to save files for template ID: {template_id}")
+            
+            # Get template directory
             template_dir = os.path.join(self.templates_dir, template_id)
             logger.info(f"Template directory path: {template_dir}")
             
-            # Force create all parent directories synchronously
+            # Ensure directory exists
             try:
-                if not os.path.exists(self.templates_dir):
-                    logger.info(f"Creating base templates directory: {self.templates_dir}")
-                    os.makedirs(self.templates_dir, exist_ok=True)
-            except Exception as e:
-                logger.error(f"Failed to create base templates directory: {str(e)}")
-                
-            # Create template directory synchronously first
-            try:
-                logger.info(f"Creating template directory: {template_dir}")
                 os.makedirs(template_dir, exist_ok=True)
-            except Exception as e:
-                logger.error(f"Failed to create template directory: {str(e)}")
-                return
-                
-            # Verify the directory was created
-            if not os.path.exists(template_dir):
-                logger.error(f"Directory creation failed, path doesn't exist: {template_dir}")
-                return
-            else:
                 logger.info(f"Successfully created directory: {template_dir}")
-            
-            # Write files synchronously to avoid any issues
-            # Generate basic files if needed
-            basic_files = {
-                "main.py": "# Generated MCP Server\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP('generated_mcp')\n\n@mcp.tool()\nasync def example_tool(query: str):\n    \"\"\"Example tool\"\"\"\n    return {'result': f'Processed: {query}'}\n\nif __name__ == \"__main__\":\n    mcp.run()",
-                "requirements.txt": "mcp>=1.4.1\nfastmcp>=0.2.0\nrequests>=2.28.0",
-                ".env.example": "# API credentials\nAPI_KEY=your_api_key_here",
-                "README.md": f"# Generated MCP Server\n\nTemplate ID: {template_id}\n\nThis MCP server was generated automatically."
-            }
+            except Exception as e:
+                logger.error(f"Error creating template directory: {str(e)}")
+                return False
             
             # Save the raw LLM response
-            if "raw_response" in files:
+            if raw_response:
                 raw_response_path = os.path.join(template_dir, "raw_llm_response.txt")
                 try:
                     with open(raw_response_path, "w", encoding="utf-8") as f:
-                        f.write(files["raw_response"])
+                        f.write(raw_response)
                     logger.info(f"Saved raw LLM response to {raw_response_path}")
                 except Exception as e:
                     logger.error(f"Failed to save raw response: {str(e)}")
             
-            # Ensure we have basic files for the MCP server
-            for filename, content in basic_files.items():
+            # If generated_code is empty or None, create required files
+            if not generated_code:
+                logger.warning("No generated code provided, using default files")
+                
+                # Only create default files if no raw response is available
+                if not raw_response:
+                    logger.warning("No raw response available either, using completely default files")
+                    generated_code = {
+                        "main.py": "# Generated MCP Server\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP('generated_mcp')\n\n@mcp.tool()\nasync def example_tool(query: str):\n    \"\"\"Example tool\"\"\"\n    return {'result': f'Processed: {query}'}\n\nif __name__ == \"__main__\":\n    mcp.run()",
+                        "requirements.txt": "mcp>=1.4.1\nfastmcp>=0.2.0\nrequests>=2.28.0",
+                        ".env.example": "# API credentials\nAPI_KEY=your_api_key_here",
+                        "README.md": f"# Generated MCP Server\n\nTemplate ID: {template_id}\n\nThis MCP server was generated automatically."
+                    }
+                else:
+                    # Try to create a main.py file from raw response
+                    generated_code = {
+                        "main.py": f"# Generated MCP Server\n\n'''\nRaw LLM Response:\n{raw_response[:2000]}...\n'''\n\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP('generated_mcp')\n\n# TODO: Implement tools based on the raw LLM response\n\nif __name__ == '__main__':\n    mcp.run()",
+                        "requirements.txt": "mcp>=1.4.1\nfastmcp>=0.2.0\nrequests>=2.28.0\nhttpx>=0.24.0\npydantic>=2.0.0\npython-dotenv>=1.0.0",
+                        ".env.example": "# API credentials\nAPI_KEY=your_api_key_here\nAPI_BASE_URL=https://api.example.com",
+                        "README.md": f"# Generated MCP Server\n\nTemplate ID: {template_id}\n\nThis MCP server was generated automatically based on LLM output. Check raw_llm_response.txt for details."
+                    }
+            
+            # Save all generated files
+            for filename, content in generated_code.items():
                 file_path = os.path.join(template_dir, filename)
                 try:
                     with open(file_path, "w", encoding="utf-8") as f:
                         f.write(content)
                     logger.info(f"Successfully wrote file: {file_path}")
                 except Exception as e:
-                    logger.error(f"Error writing file {file_path}: {str(e)}")
+                    logger.error(f"Failed to write file {filename}: {str(e)}")
             
-            # List files in directory to confirm
+            # Check what was actually saved
             try:
-                created_files = os.listdir(template_dir)
-                logger.info(f"Files in directory after save: {created_files}")
+                files = os.listdir(template_dir)
+                logger.info(f"Files in directory after save: {files}")
+                if not files:
+                    logger.warning(f"Directory exists but is empty: {template_dir}")
             except Exception as e:
                 logger.error(f"Failed to list directory contents: {str(e)}")
                 
+            return True
+            
         except Exception as e:
             logger.error(f"Error in _save_template_files: {str(e)}")
+            return False
     
     async def _write_file_async(self, filepath: str, content: str) -> None:
         """
