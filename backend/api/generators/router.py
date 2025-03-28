@@ -8,6 +8,7 @@ import os
 # Import generator service
 from engine.generator.mcp_generator_service import MCPGeneratorService
 from db.supabase_client import supabase, current_auth_user_id, serverOperations
+from engine.generator.llm_workflow import ProgressTracker
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -17,6 +18,9 @@ router = APIRouter()
 
 # Initialize generator service
 generator_service = MCPGeneratorService()
+
+# Initialize progress tracker
+progress_tracker = ProgressTracker()
 
 # Request models
 class ApiCredentials(BaseModel):
@@ -292,4 +296,72 @@ async def get_file_content(template_id: str, file_path: str):
         raise
     except Exception as e:
         logging.error(f"Error getting file content: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+
+@router.get("/generation-progress/{template_id}", response_model=Dict[str, Any])
+async def get_generation_progress(template_id: str):
+    """Get the progress of an ongoing generation process."""
+    try:
+        # Get progress from tracker
+        progress = progress_tracker.get_progress(template_id)
+        
+        if not progress:
+            # If no progress record exists, check if template exists in database
+            try:
+                template = await templateOperations.getTemplateById(template_id)
+                
+                if template:
+                    # Template exists but no progress record, so generation is complete
+                    return {
+                        "status": "completed",
+                        "progress": 100,
+                        "message": "Generation completed",
+                        "template_id": template_id,
+                        "template_exists": True
+                    }
+                else:
+                    # Template doesn't exist in database
+                    # Check if files exist on disk as a fallback
+                    template_dir = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                        "engine", "templates", "generated", template_id
+                    )
+                    
+                    if os.path.exists(template_dir):
+                        files = os.listdir(template_dir)
+                        if files:
+                            return {
+                                "status": "completed",
+                                "progress": 100,
+                                "message": "Generation completed (files exist)",
+                                "template_id": template_id,
+                                "template_exists": False,
+                                "files_exist": True,
+                                "file_count": len(files)
+                            }
+            except Exception as e:
+                logger.warning(f"Error checking template status: {str(e)}")
+            
+            # No progress record and no template exists
+            return {
+                "status": "not_found",
+                "progress": 0,
+                "message": "No generation process found with this ID",
+                "template_id": template_id,
+                "template_exists": False
+            }
+        
+        # Return the progress data
+        return {
+            **progress,
+            "template_id": template_id
+        }
+    except Exception as e:
+        logger.error(f"Error getting generation progress: {str(e)}")
+        return {
+            "status": "error",
+            "progress": 0,
+            "message": f"Error retrieving progress: {str(e)}",
+            "template_id": template_id,
+            "error": str(e)
+        } 
