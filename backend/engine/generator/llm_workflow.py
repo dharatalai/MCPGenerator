@@ -386,10 +386,10 @@ class LLMWorkflow:
             logger.info(f"[TRACK-LLM] Starting Planning API call to {state.get('template_id', 'unknown')}")
             api_call_start = time.time()
             
-            # Make API call with retries
-            max_retries = 6
+            # Try up to max_retries times with a delay between retries
             retry_count = 0
-            retry_delay = 3  # seconds
+            max_retries = 6
+            retry_delay = 10  # seconds
             
             while retry_count < max_retries:
                 try:
@@ -647,10 +647,10 @@ class LLMWorkflow:
             logger.info(f"[TRACK-LLM] Starting Coding API call to {state.get('template_id', 'unknown')}")
             api_call_start = time.time()
             
-            # Make API call with retries
-            max_retries = 6
+            # Try up to max_retries times with a delay between retries
             retry_count = 0
-            retry_delay = 3  # seconds
+            max_retries = 6
+            retry_delay = 10  # seconds
             
             while retry_count < max_retries:
                 try:

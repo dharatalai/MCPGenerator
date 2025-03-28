@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 import logging
 import uuid
 import os
+import json
 
 # Import generator service
 from engine.generator.mcp_generator_service import MCPGeneratorService
@@ -269,7 +270,30 @@ async def get_file_content(template_id: str, file_path: str):
                 logger.info(f"Found template in old location: {old_template_dir}")
                 template_dir = old_template_dir
         
-        full_path = os.path.join(template_dir, file_path)
+        # Check if file_path is a complex object or a string
+        actual_file_path = file_path
+        try:
+            # If it's passed as query parameters in complex form like file_path[name]=x&file_path[path]=y
+            # this would come through as a JSON string in some frameworks
+            file_obj = json.loads(file_path)
+            if isinstance(file_obj, dict) and 'path' in file_obj:
+                actual_file_path = file_obj['path']
+                logger.info(f"Extracted file path from JSON object: {actual_file_path}")
+        except (json.JSONDecodeError, TypeError):
+            # If it's passed as separate query parameters like file_path.name=x
+            # FastAPI will parse this as a string, so we need to handle both cases
+            pass
+            
+        full_path = os.path.join(template_dir, actual_file_path)
+        
+        # Special case for raw_response.txt - always return it if it exists
+        if actual_file_path.endswith("raw_response.txt") or "raw_response" in actual_file_path:
+            raw_response_path = os.path.join(template_dir, "raw_response.txt")
+            if os.path.exists(raw_response_path):
+                logger.info(f"Directly serving raw_response.txt file")
+                with open(raw_response_path, "r") as f:
+                    content = f.read()
+                return {"content": content}
         
         # Security check - make sure the file is actually within the template directory
         if not os.path.abspath(full_path).startswith(os.path.abspath(template_dir)):
@@ -364,4 +388,67 @@ async def get_generation_progress(template_id: str):
             "message": f"Error retrieving progress: {str(e)}",
             "template_id": template_id,
             "error": str(e)
-        } 
+        }
+
+@router.get("/raw-response/{template_id}")
+async def get_raw_response(template_id: str):
+    """Get the raw LLM response for a template."""
+    try:
+        # Build the path to the template directory
+        template_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "engine", "templates", "generated", template_id
+        )
+        
+        # If directory doesn't exist, check old location
+        if not os.path.exists(template_dir):
+            logger.warning(f"Template directory not found: {template_dir}")
+            old_template_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "templates", "generated", template_id
+            )
+            
+            if os.path.exists(old_template_dir):
+                logger.info(f"Found template in old location: {old_template_dir}")
+                template_dir = old_template_dir
+        
+        # Check for raw_response.txt file
+        raw_response_path = os.path.join(template_dir, "raw_response.txt")
+        
+        if os.path.exists(raw_response_path):
+            try:
+                with open(raw_response_path, "r") as f:
+                    content = f.read()
+                
+                logger.info(f"Successfully read raw response file of {len(content)} chars")
+                return {
+                    "success": True,
+                    "content": content,
+                    "template_id": template_id
+                }
+            except Exception as read_error:
+                logger.error(f"Error reading raw response file: {str(read_error)}")
+                raise HTTPException(status_code=500, detail=f"Failed to read raw response: {str(read_error)}")
+        else:
+            logger.warning(f"Raw response file not found: {raw_response_path}")
+            
+            # Try to find any files that might contain the raw response
+            debug_file_path = os.path.join(template_dir, "debug_raw_response.txt")
+            if os.path.exists(debug_file_path):
+                with open(debug_file_path, "r") as f:
+                    content = f.read()
+                logger.info(f"Found debug raw response file instead")
+                return {
+                    "success": True,
+                    "content": content,
+                    "template_id": template_id, 
+                    "note": "Using debug_raw_response.txt instead of raw_response.txt"
+                }
+            
+            # If no raw response file found, return 404
+            raise HTTPException(status_code=404, detail="Raw response file not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting raw response: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get raw response: {str(e)}") 
