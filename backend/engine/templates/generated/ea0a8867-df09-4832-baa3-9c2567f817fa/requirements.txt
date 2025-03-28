@@ -1,0 +1,5 @@
+fastmcp
+httpx>=0.20,<0.28 # Specify upper bound for stability
+pydantic>=1.8,<2.0 # Sticking to V1 as per plan, adjust if needed
+python-dotenv>=0.15
+uvicorn>=0.15

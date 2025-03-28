@@ -388,14 +388,24 @@ class LLMWorkflow:
             
             # Try up to max_retries times with a delay between retries
             retry_count = 0
-            max_retries = 6
+            max_retries = 10
             retry_delay = 10  # seconds
             
-            while retry_count < max_retries:
+            # Primary model to try first
+            primary_model = "google/gemini-2.5-pro-exp-03-25:free"
+            # Fallback model to use if primary model fails after max_retries
+            fallback_model = "deepseek/deepseek-r1:free"
+            current_model = primary_model
+            
+            # Track if we're already using fallback model
+            using_fallback = False
+            
+            while True:
                 try:
                     # Use synchronous API call without await
+                    logger.info(f"[TRACK-LLM] Calling Planning API with model: {current_model}")
                     chat_completion = self.planning_client.chat.completions.create(
-                        model="google/gemini-2.5-pro-exp-03-25:free",
+                        model=current_model,
                         messages=[
                             {"role": "system", "content": planning_prompt},
                             {"role": "user", "content": f"Given the provided API documentation and user request, create a detailed plan for MCP server implementation.\n\nPlease format your response in LaTeX using the \\boxed{{}} command to enclose your JSON implementation plan.\n\nExample: \\boxed{{{json_structure}}}"}
@@ -433,15 +443,41 @@ class LLMWorkflow:
                         # Empty response, retry
                         retry_count += 1
                         logger.warning(f"[TRACK-LLM] Empty response from planning API (attempt {retry_count}/{max_retries}), retrying in {retry_delay}s")
+                        
+                        # Check if we should switch to fallback model
+                        if retry_count >= max_retries and not using_fallback:
+                            logger.warning(f"[TRACK-LLM] Switching to fallback model {fallback_model} after {max_retries} failed attempts with {primary_model}")
+                            current_model = fallback_model
+                            using_fallback = True
+                            retry_count = 0  # Reset retry count for the fallback model
+                        
+                        # If we've already tried both models for max_retries attempts, break and return error
+                        if retry_count >= max_retries and using_fallback:
+                            logger.error(f"[TRACK-LLM] Both primary and fallback models failed after {max_retries} attempts each")
+                            break
+                        
                         await asyncio.sleep(retry_delay)
                 except Exception as api_error:
                     # Error during API call, retry
                     retry_count += 1
                     logger.warning(f"[TRACK-LLM] Planning API call error (attempt {retry_count}/{max_retries}): {str(api_error)}, retrying in {retry_delay}s")
+                    
+                    # Check if we should switch to fallback model
+                    if retry_count >= max_retries and not using_fallback:
+                        logger.warning(f"[TRACK-LLM] Switching to fallback model {fallback_model} after {max_retries} failed attempts with {primary_model}")
+                        current_model = fallback_model
+                        using_fallback = True
+                        retry_count = 0  # Reset retry count for the fallback model
+                    
+                    # If we've already tried both models for max_retries attempts, break and return error
+                    if retry_count >= max_retries and using_fallback:
+                        logger.error(f"[TRACK-LLM] Both primary and fallback models failed after {max_retries} attempts each")
+                        break
+                    
                     await asyncio.sleep(retry_delay)
             
-            # If we get here, all retries failed
-            error_msg = f"Planning API call failed after {max_retries} retries"
+            # If we get here, all retries with both models failed
+            error_msg = f"Planning API call failed after {max_retries} retries with both primary and fallback models"
             logger.error(f"[TRACK-LLM] {error_msg} for {state.get('template_id', 'unknown')}")
             state["implementation_plan"] = f"API call failed: {error_msg}"
             state["error"] = f"Error during planning phase: {error_msg}"
@@ -609,24 +645,10 @@ class LLMWorkflow:
                 mcp.run()
             ```
             
-            requirements.txt:
-            ```
-            mcp>=0.1.0
-            httpx>=0.24.0
-            pydantic>=2.0.0
-            python-dotenv>=1.0.0
-            ```
-            
-            .env.example:
-            ```
-            API_KEY=your_api_key_here
-            API_BASE_URL=https://api.example.com
-            ```
-            
-            Generate the following files:
-            1. main.py - The main MCP server implementation
-            2. models.py - Pydantic models for request/response types (if needed)
-            3. api.py - API client implementation (if needed) 
+            I need you to generate COMPLETE implementation files for:
+            1. main.py - The core MCP implementation
+            2. models.py - Pydantic models for the API
+            3. client.py - API client with proper error handling
             4. requirements.txt - Complete dependencies with versions
             5. .env.example - Example environment variables
             6. README.md - Comprehensive documentation
@@ -649,14 +671,24 @@ class LLMWorkflow:
             
             # Try up to max_retries times with a delay between retries
             retry_count = 0
-            max_retries = 6
+            max_retries = 10
             retry_delay = 10  # seconds
             
-            while retry_count < max_retries:
+            # Primary model to try first
+            primary_model = "google/gemini-2.5-pro-exp-03-25:free"
+            # Fallback model to use if primary model fails after max_retries
+            fallback_model = "deepseek/deepseek-chat-v3-0324:free"
+            current_model = primary_model
+            
+            # Track if we're already using fallback model
+            using_fallback = False
+            
+            while True:
                 try:
                     # Use synchronous API call without await
+                    logger.info(f"[TRACK-LLM] Calling Coding API with model: {current_model}")
                     chat_completion = self.coding_client.chat.completions.create(
-                        model="google/gemini-2.5-pro-exp-03-25:free",
+                        model=current_model,
                         messages=[
                             {"role": "system", "content": coding_prompt},
                             {"role": "user", "content": f"Given the implementation plan, generate a complete MCP server implementation with all necessary files.\n\nIMPLEMENTATION PLAN:\n{state.get('implementation_plan', 'No plan available')}\n\nPlease return your response as a JSON object with a 'files' field that contains all the generated files. Each file should have a 'name' field for the filename and a 'content' field for the file content.\n\nExample format:\n```json\n{{\n  \"files\": [\n    {{\n      \"name\": \"main.py\",\n      \"content\": \"from mcp.server.fastmcp import FastMCP\\n\\nmcp = FastMCP('example_api')\\n...\"\n    }},\n    {{\n      \"name\": \"README.md\",\n      \"content\": \"# Example API MCP Server\\n\\nThis is an MCP server for ...\"\n    }}\n  ]\n}}\n```"}
@@ -706,15 +738,41 @@ class LLMWorkflow:
                         # Empty response, retry
                         retry_count += 1
                         logger.warning(f"[TRACK-LLM] Empty response from coding API (attempt {retry_count}/{max_retries}), retrying in {retry_delay}s")
+                        
+                        # Check if we should switch to fallback model
+                        if retry_count >= max_retries and not using_fallback:
+                            logger.warning(f"[TRACK-LLM] Switching to fallback model {fallback_model} after {max_retries} failed attempts with {primary_model}")
+                            current_model = fallback_model
+                            using_fallback = True
+                            retry_count = 0  # Reset retry count for the fallback model
+                        
+                        # If we've already tried both models for max_retries attempts, break and return error
+                        if retry_count >= max_retries and using_fallback:
+                            logger.error(f"[TRACK-LLM] Both primary and fallback models failed after {max_retries} attempts each")
+                            break
+                        
                         await asyncio.sleep(retry_delay)
                 except Exception as api_error:
                     # Error during API call, retry
                     retry_count += 1
                     logger.warning(f"[TRACK-LLM] Coding API call error (attempt {retry_count}/{max_retries}): {str(api_error)}, retrying in {retry_delay}s")
+                    
+                    # Check if we should switch to fallback model
+                    if retry_count >= max_retries and not using_fallback:
+                        logger.warning(f"[TRACK-LLM] Switching to fallback model {fallback_model} after {max_retries} failed attempts with {primary_model}")
+                        current_model = fallback_model
+                        using_fallback = True
+                        retry_count = 0  # Reset retry count for the fallback model
+                    
+                    # If we've already tried both models for max_retries attempts, break and return error
+                    if retry_count >= max_retries and using_fallback:
+                        logger.error(f"[TRACK-LLM] Both primary and fallback models failed after {max_retries} attempts each")
+                        break
+                    
                     await asyncio.sleep(retry_delay)
             
-            # If we get here, all retries failed
-            error_msg = f"Coding API call failed after {max_retries} retries"
+            # If we get here, all retries with both models failed
+            error_msg = f"Coding API call failed after {max_retries} retries with both primary and fallback models"
             logger.error(f"[TRACK-LLM] {error_msg} for {state.get('template_id', 'unknown')}")
             state["generated_code"] = {"files": [{"name": "error.py", "content": f"# API call failed: {error_msg}"}]}
             state["error"] = f"Error during code generation phase: {error_msg}"
@@ -856,13 +914,13 @@ class LLMWorkflow:
                 message="Processing user request and API documentation"
             )
             
-            # Add a 3-minute timeout for the entire workflow
+            # Add a 10-minute timeout for the entire workflow
             try:
                 # Execute workflow
                 task = asyncio.create_task(self.workflow.ainvoke(state))
                 
                 # Set timeout for task
-                result = await asyncio.wait_for(task, timeout=180)  # 3 minutes
+                result = await asyncio.wait_for(task, timeout=600)  # 10 minutes
                 
                 # Log success
                 logger.info("Workflow completed successfully")
@@ -885,7 +943,7 @@ class LLMWorkflow:
                 
             except asyncio.TimeoutError:
                 # Log timeout
-                logger.error("Workflow timed out after 3 minutes")
+                logger.error("Workflow timed out after 10 minutes")
                 
                 # Update progress with timeout error
                 self.progress_tracker.update_progress(
@@ -893,8 +951,8 @@ class LLMWorkflow:
                     progress=75,
                     status="timeout",
                     step="Timeout",
-                    message="Generation process timed out after 3 minutes",
-                    error="Generation process timed out after 3 minutes"
+                    message="Generation process timed out after 10 minutes",
+                    error="Generation process timed out after 10 minutes"
                 )
                 
                 # Try to get the current value of workflow.state
@@ -902,7 +960,7 @@ class LLMWorkflow:
                 current_state = state_obj if state_obj else state
                 
                 # Add error to state
-                error_message = "Workflow timed out after 3 minutes"
+                error_message = "Workflow timed out after 10 minutes"
                 current_state["error"] = error_message
                 
                 # Try to ensure we have something to return
@@ -952,6 +1010,6 @@ class LLMWorkflow:
 
 async def generate_with_timeout():
     try:
-        return await asyncio.wait_for(generate_mcp_server(), timeout=120)  # 2 minute timeout
+        return await asyncio.wait_for(generate_mcp_server(), timeout=600)  # 2 minute timeout
     except asyncio.TimeoutError:
-        print("Generation timed out after 2 minutes") 
+        print("Generation timed out after 600 seconds- hard set") 

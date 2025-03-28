@@ -1,0 +1,5 @@
+fastmcp>=0.2.0 # Use latest or a specific compatible version
+pydantic>=1.8,<2.0 # Ensure compatibility with FastMCP version
+httpx>=0.23.0 # Use a recent version
+python-dotenv>=0.19.0
+uvicorn>=0.15.0 # For running the ASGI app

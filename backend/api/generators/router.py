@@ -33,7 +33,7 @@ class ApiCredentials(BaseModel):
 
 class GenerateRequest(BaseModel):
     """Request model for generating an MCP server."""
-    doc_url: str = Field(..., description="URL to the API documentation")
+    doc_url: List[str] = Field(..., description="URLs to the API documentation")
     request_message: str = Field(..., description="User request for the MCP server")
     api_credentials: Optional[ApiCredentials] = Field(default=None, description="API credentials for authentication")
     existing_template_id: Optional[str] = Field(default=None, description="Existing template ID to use")

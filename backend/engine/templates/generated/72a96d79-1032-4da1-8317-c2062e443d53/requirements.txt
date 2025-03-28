@@ -1,0 +1,6 @@
+fastmcp
+httpx>=0.25.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+uvicorn>=0.20.0 # For running the server
+literal_eval; python_version < '3.8' # For older python versions if needed by dependencies, check if necessary

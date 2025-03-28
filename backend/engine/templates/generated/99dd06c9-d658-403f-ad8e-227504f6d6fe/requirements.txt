@@ -1,0 +1,6 @@
+fastmcp>=0.1.0 # Replace with actual version if known, or keep flexible
+httpx>=0.25.0,<0.28.0
+pydantic>=2.0.0,<3.0.0
+typing_extensions>=4.0.0
+python-dotenv>=1.0.0
+uvicorn>=0.20.0 # For running the server

@@ -55,7 +55,7 @@ class MCPGeneratorService:
         self,
         user_id: str,
         request_message: str,
-        doc_url: str,
+        doc_url: List[str],
         api_credentials: Dict[str, Any],
         existing_template_id: Optional[str] = None,
         existing_server_id: Optional[str] = None
@@ -66,7 +66,7 @@ class MCPGeneratorService:
         Args:
             user_id: User ID
             request_message: User request message
-            doc_url: URL to API documentation
+            doc_url: List of URLs to API documentation
             api_credentials: API credentials for authentication
             existing_template_id: Optional existing template ID
             existing_server_id: Optional existing server ID
@@ -78,34 +78,46 @@ class MCPGeneratorService:
         logger.info(f"[TRACK] Generation started at {start_time}")
         
         try:
-            # Process documentation
-            logger.info(f"[TRACK] Processing documentation from URL: {doc_url}")
+            # Process documentation for all URLs
+            logger.info(f"[TRACK] Processing documentation from URLs: {doc_url}")
             
-            # Use Jina for documentation extraction (returns markdown)
-            doc_fetch_start = time.time()
-            raw_documentation = await self.jina_processor.process_url(doc_url)
-            doc_fetch_end = time.time()
-            logger.info(f"[TRACK] Documentation fetched in {doc_fetch_end - doc_fetch_start:.2f}s, size: {len(raw_documentation)} chars")
+            combined_documentation = ""
+            combined_sections = {}
+            doc_sources = []
+
+            # Process each URL and combine documentation
+            for url in doc_url:
+                # Use Jina for documentation extraction (returns markdown)
+                doc_fetch_start = time.time()
+                raw_doc = await self.jina_processor.process_url(url)
+                doc_fetch_end = time.time()
+                logger.info(f"[TRACK] Documentation fetched from {url} in {doc_fetch_end - doc_fetch_start:.2f}s, size: {len(raw_doc)} chars")
+                
+                combined_documentation += f"\n\n## Documentation from {url}\n\n{raw_doc}"
+                doc_sources.append(url)
+                
+                # Extract sections from individual URLs
+                sections = self._extract_sections_from_markdown(raw_doc)
+                for section_title, section_content in sections.items():
+                    combined_key = f"{url} - {section_title}"
+                    combined_sections[combined_key] = section_content
             
             # For structured data extraction, we'll do a simple conversion from markdown
-            # This is a simplified approach since we're getting pre-processed markdown
             documentation = {
-                "title": doc_url.split("/")[-1] if "/" in doc_url else doc_url,
-                "source_url": doc_url,
-                "content": raw_documentation,
-                # Add some basic structure extraction - in a production system
-                # this would be more sophisticated
-                "sections": self._extract_sections_from_markdown(raw_documentation)
+                "title": "Combined API Documentation",
+                "source_urls": doc_sources,
+                "content": combined_documentation,
+                "sections": combined_sections
             }
             
             # Initialize workflow state
-            logger.info(f"[TRACK] Initializing workflow state with {len(documentation['sections'])} sections")
+            logger.info(f"[TRACK] Initializing workflow state with {len(documentation['sections'])} sections from {len(doc_url)} URLs")
             state = AgentState(
                 user_id=user_id,
                 latest_user_message=request_message,
                 messages=[],
                 documentation=documentation,
-                raw_documentation=raw_documentation,
+                raw_documentation=combined_documentation,
                 implementation_plan="",
                 generated_code={},
                 api_credentials=api_credentials,
