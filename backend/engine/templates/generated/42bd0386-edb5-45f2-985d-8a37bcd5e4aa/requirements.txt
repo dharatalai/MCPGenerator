@@ -1,7 +1,0 @@
-fastmcp>=0.1.0
-pydantic>=1.8,<2.0
-# Note: If using Pydantic v2+, ensure compatibility or adjust models as needed.
-httpx>=0.23.0
-tenacity>=8.0.0
-python-dotenv>=1.0.0
-uvicorn>=0.15.0
