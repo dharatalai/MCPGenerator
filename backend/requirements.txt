@@ -29,3 +29,4 @@ gotrue>=1.0.1
 postgrest>=0.10.6
 # Added async file I/O for non-blocking operations
 aiofiles>=23.2.1
+email-validator
