@@ -1,5 +1,0 @@
-fastmcp>=0.1.0 # Use appropriate version
-pydantic>=1.9.0,<2.0.0 # Or >=2.0.0 if FastMCP supports it
-httpx>=0.23.0
-python-dotenv>=0.20.0
-uvicorn>=0.17.0
