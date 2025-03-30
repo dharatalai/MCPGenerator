@@ -58,7 +58,8 @@ class MCPGeneratorService:
         doc_url: List[str],
         api_credentials: Dict[str, Any],
         existing_template_id: Optional[str] = None,
-        existing_server_id: Optional[str] = None
+        existing_server_id: Optional[str] = None,
+        chat_session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Generate an MCP server from API documentation.
@@ -70,6 +71,7 @@ class MCPGeneratorService:
             api_credentials: API credentials for authentication
             existing_template_id: Optional existing template ID
             existing_server_id: Optional existing server ID
+            chat_session_id: Optional chat session ID to associate with this generation
             
         Returns:
             Dictionary with generation results
@@ -87,7 +89,7 @@ class MCPGeneratorService:
 
             # Process each URL and combine documentation
             for url in doc_url:
-                # Use Jina for documentation extraction (returns markdown)
+            # Use Jina for documentation extraction (returns markdown)
                 doc_fetch_start = time.time()
                 raw_doc = await self.jina_processor.process_url(url)
                 doc_fetch_end = time.time()
@@ -253,48 +255,61 @@ class MCPGeneratorService:
             end_time = time.time()
             logger.info(f"[TRACK] Generation completed in {end_time - start_time:.2f}s")
             
-            # Save raw response to chat session
+            # Save raw response to chat session if we have a chat_session_id
             if raw_response and user_id:
                 try:
-                    # Create a new chat session with the raw response
-                    session_data = {
-                        "user_id": user_id,
-                        "title": f"MCP Generation ({', '.join(doc_url[:3])})" if doc_url else "MCP Generation",
-                        "messages": json.dumps([
-                            {"role": "user", "content": request_message}
-                        ]),
-                        "doc_urls": json.dumps(doc_url),
-                        "api_key": api_credentials.get("api_key", "") if isinstance(api_credentials, dict) else "",
-                        "request_message": request_message,
-                        "has_response": True,
-                        "raw_response": raw_response
-                    }
-                    
-                    # Create the chat session
-                    chat_session = await chatSessionOperations.createChatSession(session_data)
-                    if chat_session:
-                        chat_session_id = chat_session.get("id")
-                        logger.info(f"[TRACK] Created new chat session with ID: {chat_session_id}")
+                    # If no chat_session_id is provided, create a new one
+                    if not chat_session_id:
+                        # Create a new chat session
+                        session_data = {
+                            "user_id": user_id,
+                            "title": f"MCP Generation ({', '.join(doc_url)})",
+                            "messages": json.dumps([
+                                {"role": "user", "content": request_message}
+                            ]),
+                            "doc_urls": json.dumps(doc_url),
+                            "api_key": api_credentials.get("api_key", ""),
+                            "request_message": request_message,
+                            "has_response": True,
+                            "raw_response": raw_response
+                        }
                         
-                        # Add chat_session_id to the result
-                        result["chat_session_id"] = chat_session_id
+                        # Create the chat session
+                        chat_session = await chatSessionOperations.createChatSession(session_data)
+                        if chat_session:
+                            chat_session_id = chat_session.get("id")
+                            logger.info(f"[TRACK] Created new chat session with ID: {chat_session_id}")
+                    else:
+                        # Update the existing chat session with the raw response
+                        await chatSessionOperations.saveChatSessionResponse(chat_session_id, raw_response)
+                        logger.info(f"[TRACK] Updated chat session {chat_session_id} with raw response")
                 except Exception as session_error:
                     logger.error(f"[TRACK] Error saving chat session: {str(session_error)}")
             
             # Return the result directly, which now always has success=True
+            # Include chat_session_id in the response if we have one
+            if chat_session_id:
+                result["chat_session_id"] = chat_session_id
+                
             return result
             
         except Exception as e:
             end_time = time.time()
             logger.error(f"[TRACK] Error in generate_mcp_server after {end_time - start_time:.2f}s: {str(e)}")
             # Return a success response with error details
-            return {
+            response = {
                 "success": True,
                 "template_id": existing_template_id or str(uuid.uuid4()),
                 "server_id": existing_server_id,
                 "message": f"Processed with error: {str(e)}",
                 "error_details": str(e)
             }
+            
+            # Include chat_session_id in the response if we have one
+            if chat_session_id:
+                response["chat_session_id"] = chat_session_id
+                
+            return response
     
     def _extract_sections_from_markdown(self, markdown_content: str) -> Dict[str, str]:
         """
@@ -574,7 +589,7 @@ class MCPGeneratorService:
                         logger.info(f"[TRACK] Saved extracted file: {file_name}")
                 else:
                     logger.warning(f"[TRACK] Couldn't extract files from raw response")
-            
+                
             return True
             
         except Exception as e:

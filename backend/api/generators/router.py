@@ -54,6 +54,7 @@ class GenerateResponse(BaseModel):
     template_id: Optional[str] = Field(default=None, description="ID of the generated/updated template")
     server_id: Optional[str] = Field(default=None, description="ID of the generated/updated server")
     error: Optional[str] = Field(default=None, description="Error message, if any")
+    chat_session_id: Optional[str] = Field(default=None, description="ID of the chat session with the raw response")
 
 class DeployResponse(BaseModel):
     """Response model for deployment requests."""
@@ -451,4 +452,37 @@ async def get_raw_response(template_id: str):
         raise
     except Exception as e:
         logger.error(f"Error getting raw response: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get raw response: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to get raw response: {str(e)}")
+
+@router.get("/chat-session/{session_id}")
+async def get_chat_session(session_id: str, user_id: str = Depends(get_authenticated_user_id)):
+    """Get a chat session by ID with its raw response."""
+    try:
+        # Import chat session operations
+        from db.supabase_client import chatSessionOperations
+        
+        # Get the chat session
+        chat_session = await chatSessionOperations.getChatSession(session_id)
+        
+        if not chat_session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Chat session not found: {session_id}"
+            )
+        
+        # Check if the user has access to this chat session
+        if chat_session.get("user_id") != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this chat session"
+            )
+        
+        return chat_session
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error getting chat session: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting chat session: {str(e)}"
+        ) 

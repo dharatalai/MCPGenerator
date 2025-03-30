@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import asyncio
+import json
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from typing import Dict, Any, Optional
@@ -284,8 +285,123 @@ class UserOperations:
         new_user = supabase_admin.auth.admin.create_user(user_data)
         return new_user
 
+# Chat session operations
+class ChatSessionOperations:
+    async def createChatSession(self, session_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Create a new chat session.
+        
+        Args:
+            session_data: Dictionary with chat session data
+            
+        Returns:
+            Created chat session or None if error
+        """
+        try:
+            # Generate a unique ID for the chat session if not provided
+            if "id" not in session_data:
+                session_data["id"] = str(uuid.uuid4())
+            
+            # Ensure required fields exist
+            if "user_id" not in session_data:
+                logger.error("Missing required field 'user_id' in chat session data")
+                return None
+                
+            if "title" not in session_data:
+                session_data["title"] = "MCP Generation Session"
+                
+            if "messages" not in session_data and not isinstance(session_data["messages"], str):
+                session_data["messages"] = json.dumps([])
+            
+            # Insert data using admin client with service role
+            if not supabase_admin:
+                logger.error("Service role client not initialized. Check SUPABASE_SERVICE_KEY.")
+                return None
+                
+            async def _do_insert():
+                return supabase_admin.table('chat_sessions').insert(session_data).execute()
+                
+            response = await asyncio.wait_for(_do_insert(), timeout=5.0)
+            
+            if hasattr(response, 'error') and response.error:
+                logger.error(f"Error creating chat session: {response.error}")
+                return None
+                
+            logger.info(f"Chat session created successfully: {response.data[0]['id'] if response.data else None}")
+            return response.data[0] if response.data else None
+            
+        except Exception as e:
+            logger.error(f"Error in createChatSession: {str(e)}")
+            return None
+    
+    async def saveChatSessionResponse(self, session_id: str, raw_response: str) -> bool:
+        """
+        Save raw response to an existing chat session.
+        
+        Args:
+            session_id: ID of the chat session
+            raw_response: Raw LLM response to save
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Check if admin client is available
+            if not supabase_admin:
+                logger.error("Service role client not initialized. Check SUPABASE_SERVICE_KEY.")
+                return False
+                
+            # Update the chat session with raw response
+            async def _do_update():
+                return supabase_admin.table('chat_sessions').update({
+                    "raw_response": raw_response,
+                    "has_response": True,
+                    "updated_at": "now()"
+                }).eq("id", session_id).execute()
+                
+            response = await asyncio.wait_for(_do_update(), timeout=5.0)
+            
+            if hasattr(response, 'error') and response.error:
+                logger.error(f"Error updating chat session with response: {response.error}")
+                return False
+                
+            logger.info(f"Chat session response saved successfully for ID: {session_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in saveChatSessionResponse: {str(e)}")
+            return False
+    
+    async def getChatSession(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a chat session by ID.
+        
+        Args:
+            session_id: ID of the chat session
+            
+        Returns:
+            Chat session data or None if not found
+        """
+        try:
+            # Check if admin client is available
+            if not supabase_admin:
+                logger.error("Service role client not initialized. Check SUPABASE_SERVICE_KEY.")
+                return None
+                
+            response = supabase_admin.table('chat_sessions').select('*').eq('id', session_id).execute()
+            
+            if hasattr(response, 'error') and response.error:
+                logger.error(f"Error getting chat session: {response.error}")
+                return None
+                
+            return response.data[0] if response.data and len(response.data) > 0 else None
+            
+        except Exception as e:
+            logger.error(f"Error in getChatSession: {str(e)}")
+            return None
+
 # Initialize operations
+authOperations = AuthOperations()
 templateOperations = TemplateOperations()
 serverOperations = ServerOperations()
-userOperations = UserOperations()
-authOperations = AuthOperations() 
+chatSessionOperations = ChatSessionOperations() 

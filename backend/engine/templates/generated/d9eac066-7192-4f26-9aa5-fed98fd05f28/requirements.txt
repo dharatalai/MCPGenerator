@@ -1,0 +1,5 @@
+fastmcp>=0.1.0
+pykiteconnect>=4.0.0,<5.0.0
+pydantic>=1.9.0,<2.0.0
+python-dotenv>=0.19.0
+uvicorn>=0.15.0
